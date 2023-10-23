@@ -1,3 +1,4 @@
+
 #define _POSIX_C_SOURCE 200809L
 #define _XOPEN_SOURCE 700
 
@@ -56,6 +57,7 @@ static int filecmp(void const *lhs, void const *rhs);
 
 /* Some file-scoped objects avoid having to pass things between functions */
 static int depth;
+static int lastDepth;
 static struct tree_options opts;
 static int cur_dir = AT_FDCWD;
 
@@ -64,10 +66,15 @@ static int cur_dir = AT_FDCWD;
 extern int tree_print(char const *path, struct tree_options opts);
 static int tree_print_recurse(struct fileinfo finfo);
 
+int canOpenDir = 1;
+int isDir = 1;
+int firsDir = 1;
+
 /* Simply sets up the initial recursion. Nothing for you to change here. */
 extern int
 tree_print(char const *path, struct tree_options _opts)
 {
+  canOpenDir = 1;
   opts = _opts;
   depth = 0;
   struct fileinfo finfo;
@@ -92,6 +99,7 @@ tree_print_recurse(struct fileinfo finfo)
   size_t file_count = 0;
 
   errno = 0;
+  isDir = 1;
 
   /* TODO: implement dirsonly functionality here */
   // Makes sure that the file type is directory only & not any other type of file
@@ -104,6 +112,12 @@ tree_print_recurse(struct fileinfo finfo)
   for (int i = 0; i < depth; i++)
   {
     printf("  "); // Using 4 spaces for each level of indentation
+  }
+
+  // Check if it's a directory or not
+  if (!S_ISDIR(finfo.st.st_mode))
+  {
+    isDir = 0;
   }
 
   /* TODO: print the path info */
@@ -128,9 +142,11 @@ tree_print_recurse(struct fileinfo finfo)
     {
       errno = 0; /* not an error, so reset errno! */
       printf(" [could not open directory %s]\n", finfo.path);
+      canOpenDir = 0;
     }
     goto exit;
   }
+
   cur_dir = dir;
 
   if (read_file_list(dirp, &file_list, &file_count) == -1)
@@ -143,20 +159,25 @@ tree_print_recurse(struct fileinfo finfo)
     goto exit;
   }
 
-  // if (putchar('\n') == EOF)
-  // goto exit;
+  if (!firsDir)
+  {
+    printf("\n");
+  }
+  firsDir = 0;
 
   /* See QSORT(3) for info about this function. It's not super important. It just sorts the list of
    * files using the filesort() function, which is the part you need to finish. */
   qsort(file_list, file_count, sizeof *file_list, filecmp);
 
   ++depth;
+  lastDepth = depth;
   for (size_t i = 0; i < file_count; ++i)
   {
     if (tree_print_recurse(file_list[i]) == -1)
       goto exit; /*  Recurse */
   }
   --depth;
+
 exit:;
   /* TODO: Free any allocated resources.
    * Hint: look for realloc, malloc, and calloc calls for memory allocation
@@ -166,6 +187,12 @@ exit:;
   if (file_list)
   {
     free_file_list(&file_list, file_count); // Assuming you have a function to free the file list
+  }
+
+  if (depth == 0)
+  {
+    closedir(dirp);
+    dirp = NULL;
   }
 
   if (dir != -1)
@@ -195,6 +222,14 @@ print_path_info(struct fileinfo finfo)
       putchar('d');
     else if (S_ISLNK(finfo.st.st_mode))
       putchar('l');
+    else if (S_ISSOCK(finfo.st.st_mode))
+      putchar('s');
+    else if (S_ISFIFO(finfo.st.st_mode))
+      putchar('p');
+    else if (S_ISCHR(finfo.st.st_mode))
+      putchar('c');
+    else if (S_ISBLK(finfo.st.st_mode))
+      putchar('b');
     else
       putchar('-');
 
@@ -270,9 +305,16 @@ print_path_info(struct fileinfo finfo)
     if (printf(" -> %s\n", rp) < 0) // Add a newline here
       goto exit;
   }
+
   else
   {
-    if (printf("\n") < 0) // Print a newline for non-symbolic links
+    if (firsDir)
+    {
+      printf("\n");
+      goto exit;
+    }
+
+    if ((isDir == 0) && (printf("\n") < 0)) // Print a newline for non-symbolic links
       goto exit;
   }
 
